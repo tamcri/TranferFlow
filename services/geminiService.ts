@@ -1,7 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { TransferItem, AIAnalysisResult } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = import.meta.env["VITE_GEMINI_API_KEY"] as string;
+
+const ai = new GoogleGenAI({ apiKey });
+
+
 
 export const generateItemDescription = async (brand: string, category: string, quantity: number): Promise<string> => {
   try {
