@@ -1,0 +1,5 @@
+{
+  "name": "TransferFlow - Gestione Trasferimenti Merce",
+  "description": "Una dashboard centralizzata per la gestione dei trasferimenti di merce invenduta tra negozi, potenziata da AI per analisi e descrizioni.",
+  "requestFramePermissions": []
+}
