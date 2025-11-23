@@ -32,10 +32,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [editPass, setEditPass] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState<{id: string, name: string} | null>(null);
 
-  // Sales Filter State
+    // Sales Filter State
   const [salesFilterStore, setSalesFilterStore] = useState('all');
   const [salesDateStart, setSalesDateStart] = useState('');
   const [salesDateEnd, setSalesDateEnd] = useState('');
+  const [openHistoryGroupKey, setOpenHistoryGroupKey] = useState<string | null>(null);
+
 
   // --- Handlers ---
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -82,6 +84,109 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(value);
   };
+
+    interface HistoryGroup {
+    key: string;
+    brand: string;
+    sourceStoreId: string;
+    sourceStoreName: string;
+    destinationStoreId?: string;
+    destinationStoreName?: string;
+    totalQuantity: number;
+    availableQuantity: number;
+    pendingQuantity: number;
+    transferredQuantity: number;
+    categories: string[];
+    colors: string[];
+    sizes: string[];
+    genders: string[];
+    dateAddedMin: string;
+    dateRequestedMin?: string;
+    dateReceivedMax?: string;
+    status: ItemStatus;
+    items: TransferItem[];
+  }
+
+  // --- Grouped History Logic (lotti) ---
+  const historyGroups: HistoryGroup[] = useMemo(() => {
+    const map = new Map<string, HistoryGroup>();
+
+    items.forEach((item) => {
+      const key = `${item.sourceStoreId}::${item.brand}::${item.destinationStoreId || 'none'}`;
+      const existing = map.get(key);
+
+      if (!existing) {
+        map.set(key, {
+          key,
+          brand: item.brand,
+          sourceStoreId: item.sourceStoreId,
+          sourceStoreName: item.sourceStoreName,
+          destinationStoreId: item.destinationStoreId,
+          destinationStoreName: item.destinationStoreName,
+          totalQuantity: item.quantity,
+          availableQuantity: item.status === ItemStatus.AVAILABLE ? item.quantity : 0,
+          pendingQuantity: item.status === ItemStatus.PENDING ? item.quantity : 0,
+          transferredQuantity: item.status === ItemStatus.TRANSFERRED ? item.quantity : 0,
+          categories: item.category ? [item.category] : [],
+          colors: item.color ? [item.color] : [],
+          sizes: item.size ? [item.size] : [],
+          genders: item.gender ? [item.gender] : [],
+          dateAddedMin: item.dateAdded,
+          dateRequestedMin: item.dateRequested,
+          dateReceivedMax: item.dateReceived,
+          status: item.status,
+          items: [item],
+        });
+      } else {
+        existing.totalQuantity += item.quantity;
+        if (item.status === ItemStatus.AVAILABLE) existing.availableQuantity += item.quantity;
+        if (item.status === ItemStatus.PENDING) existing.pendingQuantity += item.quantity;
+        if (item.status === ItemStatus.TRANSFERRED) existing.transferredQuantity += item.quantity;
+
+        if (item.category && !existing.categories.includes(item.category)) {
+          existing.categories.push(item.category);
+        }
+        if (item.color && !existing.colors.includes(item.color)) {
+          existing.colors.push(item.color);
+        }
+        if (item.size && !existing.sizes.includes(item.size)) {
+          existing.sizes.push(item.size);
+        }
+        if (item.gender && !existing.genders.includes(item.gender)) {
+          existing.genders.push(item.gender);
+        }
+
+        if (item.dateAdded < existing.dateAddedMin) {
+          existing.dateAddedMin = item.dateAdded;
+        }
+        if (item.dateRequested) {
+          if (!existing.dateRequestedMin || item.dateRequested < existing.dateRequestedMin) {
+            existing.dateRequestedMin = item.dateRequested;
+          }
+        }
+        if (item.dateReceived) {
+          if (!existing.dateReceivedMax || item.dateReceived > existing.dateReceivedMax) {
+            existing.dateReceivedMax = item.dateReceived;
+          }
+        }
+
+        // Priorità stato: PENDING > TRANSFERRED > AVAILABLE
+        if (item.status === ItemStatus.PENDING) {
+          existing.status = ItemStatus.PENDING;
+        } else if (item.status === ItemStatus.TRANSFERRED && existing.status !== ItemStatus.PENDING) {
+          existing.status = ItemStatus.TRANSFERRED;
+        } else if (!existing.status) {
+          existing.status = ItemStatus.AVAILABLE;
+        }
+
+        existing.items.push(item);
+      }
+    });
+
+    // Ordina per data inserimento (più recenti in alto)
+    return Array.from(map.values()).sort((a, b) => b.dateAddedMin.localeCompare(a.dateAddedMin));
+  }, [items]);
+
 
   // --- Filtered Sales Logic ---
   const filteredSales = useMemo(() => {
@@ -268,81 +373,291 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* --- Tab: Storico Movimentazioni --- */}
         {activeTab === 'history' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-             <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                <h3 className="font-bold text-slate-800 flex items-center">
-                  <History size={18} className="mr-2 text-indigo-600"/>
-                  Tracciamento & Movimentazioni
-                </h3>
-             </div>
-             <div className="overflow-x-auto">
-               <table className="w-full text-left text-sm">
-                 <thead className="bg-slate-50 border-b border-slate-200">
-                   <tr>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase">Articolo</th>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase">Dettagli</th>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase">Origine <ArrowRight size={12} className="inline mx-1"/> Destinazione</th>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase">Stato</th>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase">Date</th>
-                     <th className="px-4 py-3 font-bold text-slate-500 uppercase text-right">Permanenza</th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-100">
-                   {items.map(item => {
-                     const daysSinceAdded = calculateDays(item.dateAdded);
-                     return (
-                       <tr key={item.id} className="hover:bg-slate-50">
-                         <td className="px-4 py-3">
-                           <div className="font-bold text-slate-800">{item.brand}</div>
-                           <div className="text-slate-500 text-xs">{item.category}</div>
-                         </td>
-                         <td className="px-4 py-3">
-                            <div className="text-xs text-slate-600 space-y-0.5">
-                                <div><span className="text-slate-400">Sesso:</span> {item.gender}</div>
-                                <div><span className="text-slate-400">Colore:</span> {item.color}</div>
-                                <div><span className="text-slate-400">Taglia:</span> {item.size}</div>
-                                <div><span className="text-slate-400">Qtà:</span> {item.quantity}</div>
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-800 flex items-center">
+                <History size={18} className="mr-2 text-indigo-600" />
+                Tracciamento & Movimentazioni
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase">Lotto / Brand</th>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase">Dettaglio lotto</th>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase">
+                      Origine <ArrowRight size={12} className="inline mx-1" /> Destinazione
+                    </th>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase">Stato</th>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase">Date</th>
+                    <th className="px-4 py-3 font-bold text-slate-500 uppercase text-right">Permanenza</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {historyGroups.map((group) => {
+                    const daysSinceAdded = calculateDays(group.dateAddedMin);
+
+                    const categoriesLabel =
+                      group.categories.length === 0
+                        ? "-"
+                        : group.categories.slice(0, 3).join(", ") +
+                          (group.categories.length > 3 ? "…" : "");
+
+                    const colorsLabel =
+                      group.colors.length === 0
+                        ? "-"
+                        : group.colors.slice(0, 3).join(", ") +
+                          (group.colors.length > 3 ? "…" : "");
+
+                    const sizesLabel =
+                      group.sizes.length === 0
+                        ? "-"
+                        : group.sizes.slice(0, 4).join(", ") +
+                          (group.sizes.length > 4 ? "…" : "");
+
+                    const gendersLabel =
+                      group.genders.length === 0
+                        ? "-"
+                        : group.genders.join(", ");
+
+                    const isOpen = openHistoryGroupKey === group.key;
+
+                    return (
+                      <React.Fragment key={group.key}>
+                        <tr
+                          className="hover:bg-slate-50 cursor-pointer align-top"
+                          onClick={() =>
+                            setOpenHistoryGroupKey(isOpen ? null : group.key)
+                          }
+                        >
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-slate-800 flex items-center gap-2">
+                              <span>{group.brand}</span>
+                              <span className="text-[10px] uppercase tracking-wide text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                Lotto ({group.items.length} righe)
+                              </span>
                             </div>
-                         </td>
-                         <td className="px-4 py-3">
-                           <div className="flex flex-col gap-1">
-                             <span className="text-red-500 text-xs font-semibold bg-red-50 px-2 py-0.5 rounded w-fit">DA: {item.sourceStoreName}</span>
-                             {item.destinationStoreName ? (
-                               <span className="text-green-600 text-xs font-semibold bg-green-50 px-2 py-0.5 rounded w-fit">A: {item.destinationStoreName}</span>
-                             ) : (
-                               <span className="text-slate-400 text-xs italic pl-2">- Nessuna richiesta -</span>
-                             )}
-                           </div>
-                         </td>
-                         <td className="px-4 py-3">
-                           <span className={`px-2 py-1 rounded text-xs font-bold ${
-                             item.status === ItemStatus.AVAILABLE ? 'bg-slate-100 text-slate-600' :
-                             item.status === ItemStatus.PENDING ? 'bg-yellow-100 text-yellow-700' :
-                             'bg-green-100 text-green-700'
-                           }`}>
-                             {item.status}
-                           </span>
-                         </td>
-                         <td className="px-4 py-3 text-xs text-slate-600 space-y-1">
-                           <div><span className="text-slate-400 w-6 inline-block">Ins:</span> {new Date(item.dateAdded).toLocaleDateString()}</div>
-                           {item.dateRequested && <div><span className="text-slate-400 w-6 inline-block">Rich:</span> {new Date(item.dateRequested).toLocaleDateString()}</div>}
-                           {item.dateReceived && <div><span className="text-slate-400 w-6 inline-block">Ric:</span> {new Date(item.dateReceived).toLocaleDateString()}</div>}
-                         </td>
-                         <td className="px-4 py-3 text-right">
-                           <div className="flex flex-col items-end">
-                             <span className={`font-bold text-lg ${daysSinceAdded > 30 ? 'text-red-500' : 'text-slate-700'}`}>
-                               {daysSinceAdded} gg
-                             </span>
-                             <span className="text-[10px] text-slate-400 uppercase">In stock</span>
-                           </div>
-                         </td>
-                       </tr>
-                     );
-                   })}
-                 </tbody>
-               </table>
-             </div>
+                            <div className="text-slate-500 text-xs">
+                              {categoriesLabel}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-600">
+                            <div className="space-y-0.5">
+                              <div>
+                                <span className="text-slate-400">Sesso:</span>{" "}
+                                {gendersLabel}
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Colori:</span>{" "}
+                                {colorsLabel}
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Taglie:</span>{" "}
+                                {sizesLabel}
+                              </div>
+                              <div>
+                                <span className="text-slate-400">
+                                  Qtà totale:
+                                </span>{" "}
+                                {group.totalQuantity}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col gap-1 text-xs">
+                              <span className="text-red-500 text-[11px] font-semibold bg-red-50 px-2 py-0.5 rounded w-fit">
+                                DA: {group.sourceStoreName}
+                              </span>
+                              {group.destinationStoreName ? (
+                                <span className="text-green-600 text-[11px] font-semibold bg-green-50 px-2 py-0.5 rounded w-fit">
+                                  A: {group.destinationStoreName}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 text-xs italic pl-2">
+                                  - Nessuna richiesta -
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-bold ${
+                                group.status === ItemStatus.AVAILABLE
+                                  ? "bg-slate-100 text-slate-600"
+                                  : group.status === ItemStatus.PENDING
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-green-100 text-green-700"
+                              }`}
+                            >
+                              {group.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-600 space-y-1">
+                            <div>
+                              <span className="text-slate-400">Ins:</span>{" "}
+                              {new Date(group.dateAddedMin).toLocaleDateString(
+                                "it-IT"
+                              )}
+                            </div>
+                            {group.dateRequestedMin && (
+                              <div>
+                                <span className="text-slate-400">Rich:</span>{" "}
+                                {new Date(
+                                  group.dateRequestedMin
+                                ).toLocaleDateString("it-IT")}
+                              </div>
+                            )}
+                            {group.dateReceivedMax && (
+                              <div>
+                                <span className="text-slate-400">Ricev:</span>{" "}
+                                {new Date(
+                                  group.dateReceivedMax
+                                ).toLocaleDateString("it-IT")}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex flex-col items-end">
+                              <span
+                                className={`font-bold text-lg ${
+                                  daysSinceAdded > 30
+                                    ? "text-red-500"
+                                    : "text-slate-700"
+                                }`}
+                              >
+                                {daysSinceAdded} gg
+                              </span>
+                              <span className="text-[10px] text-slate-400 uppercase">
+                                In stock
+                              </span>
+                              <span className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                {isOpen
+                                  ? "Nascondi dettaglio lotto"
+                                  : "Vedi dettaglio lotto"}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {isOpen && (
+                          <tr>
+                            <td
+                              colSpan={6}
+                              className="bg-slate-50 px-4 py-3 text-xs text-slate-700"
+                            >
+                              <div className="mb-2 font-semibold text-[11px] text-slate-500 uppercase">
+                                Dettaglio righe lotto
+                              </div>
+                              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-white border-b border-slate-200">
+                                    <tr>
+                                      <th className="px-3 py-2 text-left font-semibold text-slate-500">
+                                        Articolo
+                                      </th>
+                                      <th className="px-3 py-2 text-left font-semibold text-slate-500">
+                                        Dettagli
+                                      </th>
+                                      <th className="px-3 py-2 text-left font-semibold text-slate-500">
+                                        Origine → Destinazione
+                                      </th>
+                                      <th className="px-3 py-2 text-left font-semibold text-slate-500">
+                                        Stato
+                                      </th>
+                                      <th className="px-3 py-2 text-left font-semibold text-slate-500">
+                                        Date
+                                      </th>
+                                      <th className="px-3 py-2 text-right font-semibold text-slate-500">
+                                        Qtà
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 bg-white">
+                                    {group.items.map((item) => (
+                                      <tr key={item.id} className="align-top">
+                                        <td className="px-3 py-2">
+                                          <div className="font-semibold text-slate-800">
+                                            {item.brand}
+                                          </div>
+                                          <div className="text-slate-500 text-[11px]">
+                                            {item.category}
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2 text-[11px] text-slate-600">
+                                          <div>Sesso: {item.gender}</div>
+                                          <div>Colore: {item.color}</div>
+                                          <div>Taglia: {item.size}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-[11px] text-slate-600">
+                                          <div>Da: {item.sourceStoreName}</div>
+                                          {item.destinationStoreName && (
+                                            <div>
+                                              A: {item.destinationStoreName}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          <span
+                                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                              item.status ===
+                                              ItemStatus.AVAILABLE
+                                                ? "bg-slate-100 text-slate-600"
+                                                : item.status ===
+                                                  ItemStatus.PENDING
+                                                ? "bg-yellow-100 text-yellow-700"
+                                                : "bg-green-100 text-green-700"
+                                            }`}
+                                          >
+                                            {item.status}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-[11px] text-slate-600">
+                                          <div>
+                                            Ins:{" "}
+                                            {new Date(
+                                              item.dateAdded
+                                            ).toLocaleDateString("it-IT")}
+                                          </div>
+                                          {item.dateRequested && (
+                                            <div>
+                                              Rich:{" "}
+                                              {new Date(
+                                                item.dateRequested
+                                              ).toLocaleDateString("it-IT")}
+                                            </div>
+                                          )}
+                                          {item.dateReceived && (
+                                            <div>
+                                              Ricev:{" "}
+                                              {new Date(
+                                                item.dateReceived
+                                              ).toLocaleDateString("it-IT")}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-sm font-semibold">
+                                          {item.quantity}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
+        
+        {/* --- Tab: Venduto --- */}
+
 
         {/* --- Tab: Venduto --- */}
         {activeTab === 'sales' && (

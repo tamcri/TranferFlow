@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { STORES, INITIAL_ITEMS, ADMIN_CREDENTIALS, INITIAL_SALES } from './constants';
 import { Store, TransferItem, ItemStatus, SalesReport } from './types';
-import { ItemCard } from './components/ItemCard';
 import { AddItemModal } from './components/AddItemModal';
 import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -22,7 +21,7 @@ import {
   updateSalesReport
 } from './services/salesService';
 
-// nuova card per lotti brand
+// card lotti brand
 import { BrandGroupCard, BrandGroup } from './components/BrandGroupCard';
 
 const App: React.FC = () => {
@@ -149,7 +148,7 @@ const App: React.FC = () => {
     setAuthError(null);
   };
 
-  // --- Admin Handlers (collegati a Supabase) ---
+  // --- Admin Handlers ---
   const handleAdminAddStore = (newStore: Store) => {
     setAllStores(prev => [...prev, newStore]);
     showToast(`Negozio ${newStore.name} creato con successo!`);
@@ -203,19 +202,22 @@ const App: React.FC = () => {
       const key = `${it.sourceStoreId}::${it.brand}`;
       const existing = map.get(key);
 
-      const base = existing ?? {
-        brand: it.brand,
-        sourceStoreId: it.sourceStoreId,
-        sourceStoreName: it.sourceStoreName,
-        totalQuantity: 0,
-        availableQuantity: 0,
-        pendingQuantity: 0,
-        transferredQuantity: 0,
-        categories: [] as string[],
-        colors: [] as string[],
-        sizes: [] as string[],
-        items: [] as TransferItem[],
-      };
+      const base: BrandGroup =
+        existing ?? {
+          brand: it.brand,
+          sourceStoreId: it.sourceStoreId,
+          sourceStoreName: it.sourceStoreName,
+          destinationStoreId: it.destinationStoreId ?? undefined,
+          destinationStoreName: it.destinationStoreName ?? undefined,
+          totalQuantity: 0,
+          availableQuantity: 0,
+          pendingQuantity: 0,
+          transferredQuantity: 0,
+          categories: [] as string[],
+          colors: [] as string[],
+          sizes: [] as string[],
+          items: [] as TransferItem[],
+        };
 
       const qty = it.quantity ?? 0;
 
@@ -239,6 +241,12 @@ const App: React.FC = () => {
         base.sizes.push(it.size);
       }
 
+      // aggiorna destinazione a livello di lotto se presente
+      if (it.destinationStoreId) {
+        base.destinationStoreId = it.destinationStoreId;
+        base.destinationStoreName = it.destinationStoreName ?? base.destinationStoreName;
+      }
+
       base.items.push(it);
 
       map.set(key, base);
@@ -249,20 +257,24 @@ const App: React.FC = () => {
     );
   };
 
-  // --- Gruppi per "I miei stock" (lotti del negozio corrente) ---
+  // --- Gruppi per "I miei stock" (sia come sorgente che come destinazione) ---
   const myBrandGroups = useMemo<BrandGroup[]>(() => {
     if (!currentStore) return [];
-    const mine = items.filter(it => it.sourceStoreId === currentStore.id);
+    const mine = items.filter(
+      it =>
+        it.sourceStoreId === currentStore.id ||
+        it.destinationStoreId === currentStore.id
+    );
     return buildBrandGroups(mine);
   }, [items, currentStore]);
 
-  // --- Gruppi per "Bacheca Network" (stock disponibile dagli altri) ---
+  // --- Gruppi per "Bacheca Network" (stock di altri, finché non sono trasferiti) ---
   const networkBrandGroups = useMemo<BrandGroup[]>(() => {
     if (!currentStore) return [];
     const others = items.filter(
       it =>
         it.sourceStoreId !== currentStore.id &&
-        it.status === ItemStatus.AVAILABLE
+        it.status !== ItemStatus.TRANSFERRED
     );
     return buildBrandGroups(others);
   }, [items, currentStore]);
@@ -358,7 +370,54 @@ const App: React.FC = () => {
     })();
   };
 
-  // --- Conferma Ricezione singolo articolo (manteniamo per logica esistente) ---
+  // --- Conferma ricezione lotto (destinazione conferma tutto il blocco) ---
+  const handleConfirmReceiptGroup = (group: BrandGroup) => {
+    if (!currentStore) return;
+
+    const nowIso = new Date().toISOString();
+    const toUpdate: TransferItem[] = [];
+
+    setItems(prev =>
+      prev.map(it => {
+        const belongsToGroup =
+          it.sourceStoreId === group.sourceStoreId &&
+          it.brand === group.brand &&
+          it.destinationStoreId === currentStore.id &&
+          it.status === ItemStatus.PENDING;
+
+        if (belongsToGroup) {
+          const updated: TransferItem = {
+            ...it,
+            status: ItemStatus.TRANSFERRED,
+            dateReceived: nowIso,
+          };
+          toUpdate.push(updated);
+          return updated;
+        }
+        return it;
+      })
+    );
+
+    if (toUpdate.length === 0) {
+      showToast('Nessun articolo in attesa per questo lotto.');
+      return;
+    }
+
+    showToast(
+      `Ricezione confermata per ${toUpdate.length} articoli del brand ${group.brand}.`
+    );
+
+    (async () => {
+      try {
+        await Promise.all(toUpdate.map(it => updateTransferItem(it)));
+      } catch (err) {
+        console.error('Errore aggiornamento lotto su Supabase (conferma ricezione):', err);
+        showToast('Errore aggiornamento lotto su Supabase.');
+      }
+    })();
+  };
+
+  // --- (restano le funzioni per singolo articolo, se mai serviranno) ---
   const handleRequestTransfer = (itemId: string) => {
     if (!currentStore) return;
 
@@ -586,7 +645,8 @@ const App: React.FC = () => {
             onUpdateSale={handleUpdateSale}
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
+
             {groupsToShow.length === 0 ? (
               <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400 bg-white rounded-2xl border border-slate-200 border-dashed">
                 <Package size={48} className="mb-4 opacity-20" />
@@ -607,6 +667,7 @@ const App: React.FC = () => {
                   currentStoreId={currentStore.id}
                   mode={view === 'dashboard' ? 'network' : 'my-stock'}
                   onRequestGroup={view === 'dashboard' ? handleRequestTransferGroup : undefined}
+                  onConfirmGroup={view === 'my-items' ? handleConfirmReceiptGroup : undefined}
                 />
               ))
             )}
