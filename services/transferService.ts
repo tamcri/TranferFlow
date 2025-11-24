@@ -7,11 +7,13 @@ function mapRowToTransferItem(row: any): TransferItem {
     id: row.id,
     brand: row.brand,
     category: row.category,
+    typology: row.typology ?? undefined,              // 👈 NUOVO
     gender: row.gender,
     size: row.size,
     color: row.color,
     quantity: row.quantity,
     description: row.description ?? "",
+    articleCode: row.article_code ?? undefined,       // 👈 NUOVO (se non l’avevamo ancora)
     status: row.status as ItemStatus,
     sourceStoreId: row.source_store_id,
     sourceStoreName: row.source_store_name,
@@ -23,17 +25,20 @@ function mapRowToTransferItem(row: any): TransferItem {
   };
 }
 
+
 // Mappa TransferItem -> shape della tabella
 function mapTransferItemToRow(item: TransferItem): any {
   return {
     id: item.id,
     brand: item.brand,
     category: item.category,
+    typology: item.typology ?? null,                 // 👈 NUOVO
     gender: item.gender,
     size: item.size,
     color: item.color,
     quantity: item.quantity,
     description: item.description ?? "",
+    article_code: item.articleCode ?? null,          // 👈 NUOVO
     status: item.status,
     source_store_id: item.sourceStoreId,
     source_store_name: item.sourceStoreName,
@@ -44,6 +49,7 @@ function mapTransferItemToRow(item: TransferItem): any {
     date_received: item.dateReceived ?? null,
   };
 }
+
 
 // 🔹 Leggi tutti gli articoli (per Admin o per viste globali)
 export async function getAllTransferItems(): Promise<TransferItem[]> {

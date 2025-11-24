@@ -80,6 +80,12 @@ export const ItemCard: React.FC<ItemCardProps> = ({
                 </span>
               </div>
               <p className="text-sm text-slate-500 font-medium">{item.category}</p>
+              {item.articleCode && (
+              <p className="text-xs text-slate-500 mt-1">
+              Cod. articolo: <span className="font-semibold">{item.articleCode}</span>
+             </p>
+              )}
+
             </div>
           </div>
           {getStatusBadge()}

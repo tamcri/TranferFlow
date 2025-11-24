@@ -194,16 +194,25 @@ const App: React.FC = () => {
     })();
   };
 
-  // --- Helper: costruisce i gruppi per brand ---
+  // --- Helper: chiave lotto (per separare caricamenti anche stesso brand/store) ---
+  const getLotKey = (it: TransferItem): string => {
+    const base = `${it.sourceStoreId}::${it.brand}`;
+    if (!it.dateAdded) return base;
+    // uso data/ora fino ai secondi per distinguere i batch di carico
+    return `${base}::${it.dateAdded.slice(0, 19)}`;
+  };
+
+  // --- Helper: costruisce i gruppi per brand/lotto ---
   const buildBrandGroups = (sourceItems: TransferItem[]): BrandGroup[] => {
     const map = new Map<string, BrandGroup>();
 
     for (const it of sourceItems) {
-      const key = `${it.sourceStoreId}::${it.brand}`;
-      const existing = map.get(key);
+      const lotKey = getLotKey(it);
+      const existing = map.get(lotKey);
 
       const base: BrandGroup =
         existing ?? {
+          lotKey, // 👈 nuovo campo per distinguere i lotti
           brand: it.brand,
           sourceStoreId: it.sourceStoreId,
           sourceStoreName: it.sourceStoreName,
@@ -249,11 +258,12 @@ const App: React.FC = () => {
 
       base.items.push(it);
 
-      map.set(key, base);
+      map.set(lotKey, base);
     }
 
+    // ordino per brand e poi per lotKey (così i lotti dello stesso brand stanno vicini)
     return Array.from(map.values()).sort((a, b) =>
-      a.brand.localeCompare(b.brand)
+      a.brand.localeCompare(b.brand) || a.lotKey.localeCompare(b.lotKey)
     );
   };
 
@@ -281,48 +291,55 @@ const App: React.FC = () => {
 
   // --- Logica caricamento nuovi articoli ---
   const handleAddItem = (
-    newItems: {
-      brand: string;
-      gender: string;
-      category: string;
-      color: string;
-      size: string;
-      quantity: number;
-      description: string;
-    }[]
-  ) => {
-    if (!currentStore) return;
-    
-    const timestamp = Date.now();
-    const createdItems: TransferItem[] = newItems.map((item, index) => ({
-      id: `I${timestamp}-${index}`,
-      sourceStoreId: currentStore.id,
-      sourceStoreName: currentStore.name,
-      brand: item.brand,
-      gender: item.gender,
-      category: item.category,
-      color: item.color,
-      size: item.size,
-      quantity: item.quantity,
-      description: item.description,
-      status: ItemStatus.AVAILABLE,
-      dateAdded: new Date().toISOString(),
-    }));
+  newItems: {
+    brand: string;
+    gender: string;
+    category: string;
+    typology?: string;        // 👈 NUOVO
+    color: string;
+    size: string;
+    quantity: number;
+    description: string;
+    articleCode?: string;
+  }[]
+) => {
+  if (!currentStore) return;
+  
+  const timestamp = Date.now();
+  const nowIso = new Date().toISOString();
 
-    setItems(prev => [...createdItems, ...prev]);
-    showToast(`${createdItems.length} Articoli aggiunti con successo!`);
+  const createdItems: TransferItem[] = newItems.map((item, index) => ({
+    id: `I${timestamp}-${index}`,
+    sourceStoreId: currentStore.id,
+    sourceStoreName: currentStore.name,
+    brand: item.brand,
+    gender: item.gender,
+    category: item.category,
+    typology: item.typology,           // 👈 NUOVO
+    color: item.color,
+    size: item.size,
+    quantity: item.quantity,
+    description: item.description,
+    articleCode: item.articleCode,
+    status: ItemStatus.AVAILABLE,
+    dateAdded: nowIso,
+  }));
 
-    (async () => {
-      try {
-        await createTransferItems(createdItems);
-      } catch (err) {
-        console.error('Errore salvataggio articoli su Supabase:', err);
-        showToast('Errore nel salvataggio articoli su Supabase.');
-      }
-    })();
-  };
+  setItems(prev => [...createdItems, ...prev]);
+  showToast(`${createdItems.length} Articoli aggiunti con successo!`);
 
-  // --- Richiesta blocco (lotto per brand) ---
+  (async () => {
+    try {
+      await createTransferItems(createdItems);
+    } catch (err) {
+      console.error('Errore salvataggio articoli su Supabase:', err);
+      showToast('Errore nel salvataggio su database.');
+    }
+  })();
+};
+
+
+  // --- Richiesta blocco (lotto per brand/lotKey) ---
   const handleRequestTransferGroup = (group: BrandGroup) => {
     if (!currentStore) return;
 
@@ -332,8 +349,7 @@ const App: React.FC = () => {
     setItems(prev =>
       prev.map(it => {
         const belongsToGroup =
-          it.sourceStoreId === group.sourceStoreId &&
-          it.brand === group.brand &&
+          getLotKey(it) === group.lotKey && // 👈 stesso lotto
           it.status === ItemStatus.AVAILABLE;
 
         if (belongsToGroup) {
@@ -380,8 +396,7 @@ const App: React.FC = () => {
     setItems(prev =>
       prev.map(it => {
         const belongsToGroup =
-          it.sourceStoreId === group.sourceStoreId &&
-          it.brand === group.brand &&
+          getLotKey(it) === group.lotKey && // 👈 stesso lotto
           it.destinationStoreId === currentStore.id &&
           it.status === ItemStatus.PENDING;
 
@@ -645,33 +660,33 @@ const App: React.FC = () => {
             onUpdateSale={handleUpdateSale}
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
+          <div className="flex flex-col gap-4">
+  {groupsToShow.length === 0 ? (
+    <div className="flex flex-col items-center justify-center py-12 px-6 text-center bg-white rounded-2xl border border-slate-200 border-dashed">
+      <Package size={48} className="mb-4 opacity-20" />
+      <p className="text-lg font-medium">
+        Nessun lotto trovato in questa vista.
+      </p>
+      {view === 'my-items' && (
+        <p className="text-sm mt-2">
+          Inizia caricando merce che non riesci a vendere.
+        </p>
+      )}
+    </div>
+  ) : (
+    groupsToShow.map(group => (
+      <BrandGroupCard
+        key={group.lotKey} // 👈 chiave React per lotto, non solo brand
+        group={group}
+        currentStoreId={currentStore.id}
+        mode={view === 'dashboard' ? 'network' : 'my-stock'}
+        onRequestGroup={view === 'dashboard' ? handleRequestTransferGroup : undefined}
+        onConfirmGroup={view === 'my-items' ? handleConfirmReceiptGroup : undefined}
+      />
+    ))
+  )}
+</div>
 
-            {groupsToShow.length === 0 ? (
-              <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400 bg-white rounded-2xl border border-slate-200 border-dashed">
-                <Package size={48} className="mb-4 opacity-20" />
-                <p className="text-lg font-medium">
-                  Nessun lotto trovato in questa vista.
-                </p>
-                {view === 'my-items' && (
-                  <p className="text-sm mt-2">
-                    Inizia caricando merce che non riesci a vendere.
-                  </p>
-                )}
-              </div>
-            ) : (
-              groupsToShow.map(group => (
-                <BrandGroupCard
-                  key={`${group.sourceStoreId}::${group.brand}`}
-                  group={group}
-                  currentStoreId={currentStore.id}
-                  mode={view === 'dashboard' ? 'network' : 'my-stock'}
-                  onRequestGroup={view === 'dashboard' ? handleRequestTransferGroup : undefined}
-                  onConfirmGroup={view === 'my-items' ? handleConfirmReceiptGroup : undefined}
-                />
-              ))
-            )}
-          </div>
         )}
       </main>
 
@@ -712,5 +727,6 @@ const ArrowRightLeftIcon = ({ size, className }: { size: number; className?: str
 );
 
 export default App;
+
 
 

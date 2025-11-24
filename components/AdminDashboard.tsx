@@ -107,85 +107,95 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     items: TransferItem[];
   }
 
+  // Chiave per distinguere i lotti anche in Admin:
+// store sorgente + brand + destinazione + data inserimento (fino ai secondi)
+const getHistoryLotKey = (item: TransferItem): string => {
+  const base = `${item.sourceStoreId}::${item.brand}::${item.destinationStoreId || 'none'}`;
+  if (!item.dateAdded) return base;
+  return `${base}::${item.dateAdded.slice(0, 19)}`;
+};
+
+
   // --- Grouped History Logic (lotti) ---
-  const historyGroups: HistoryGroup[] = useMemo(() => {
-    const map = new Map<string, HistoryGroup>();
+const historyGroups: HistoryGroup[] = useMemo(() => {
+  const map = new Map<string, HistoryGroup>();
 
-    items.forEach((item) => {
-      const key = `${item.sourceStoreId}::${item.brand}::${item.destinationStoreId || 'none'}`;
-      const existing = map.get(key);
+  items.forEach((item) => {
+    const key = getHistoryLotKey(item);
+    const existing = map.get(key);
 
-      if (!existing) {
-        map.set(key, {
-          key,
-          brand: item.brand,
-          sourceStoreId: item.sourceStoreId,
-          sourceStoreName: item.sourceStoreName,
-          destinationStoreId: item.destinationStoreId,
-          destinationStoreName: item.destinationStoreName,
-          totalQuantity: item.quantity,
-          availableQuantity: item.status === ItemStatus.AVAILABLE ? item.quantity : 0,
-          pendingQuantity: item.status === ItemStatus.PENDING ? item.quantity : 0,
-          transferredQuantity: item.status === ItemStatus.TRANSFERRED ? item.quantity : 0,
-          categories: item.category ? [item.category] : [],
-          colors: item.color ? [item.color] : [],
-          sizes: item.size ? [item.size] : [],
-          genders: item.gender ? [item.gender] : [],
-          dateAddedMin: item.dateAdded,
-          dateRequestedMin: item.dateRequested,
-          dateReceivedMax: item.dateReceived,
-          status: item.status,
-          items: [item],
-        });
-      } else {
-        existing.totalQuantity += item.quantity;
-        if (item.status === ItemStatus.AVAILABLE) existing.availableQuantity += item.quantity;
-        if (item.status === ItemStatus.PENDING) existing.pendingQuantity += item.quantity;
-        if (item.status === ItemStatus.TRANSFERRED) existing.transferredQuantity += item.quantity;
+    if (!existing) {
+      map.set(key, {
+        key,
+        brand: item.brand,
+        sourceStoreId: item.sourceStoreId,
+        sourceStoreName: item.sourceStoreName,
+        destinationStoreId: item.destinationStoreId,
+        destinationStoreName: item.destinationStoreName,
+        totalQuantity: item.quantity,
+        availableQuantity: item.status === ItemStatus.AVAILABLE ? item.quantity : 0,
+        pendingQuantity: item.status === ItemStatus.PENDING ? item.quantity : 0,
+        transferredQuantity: item.status === ItemStatus.TRANSFERRED ? item.quantity : 0,
+        categories: item.category ? [item.category] : [],
+        colors: item.color ? [item.color] : [],
+        sizes: item.size ? [item.size] : [],
+        genders: item.gender ? [item.gender] : [],
+        dateAddedMin: item.dateAdded,
+        dateRequestedMin: item.dateRequested,
+        dateReceivedMax: item.dateReceived,
+        status: item.status,
+        items: [item],
+      });
+    } else {
+      existing.totalQuantity += item.quantity;
+      if (item.status === ItemStatus.AVAILABLE) existing.availableQuantity += item.quantity;
+      if (item.status === ItemStatus.PENDING) existing.pendingQuantity += item.quantity;
+      if (item.status === ItemStatus.TRANSFERRED) existing.transferredQuantity += item.quantity;
 
-        if (item.category && !existing.categories.includes(item.category)) {
-          existing.categories.push(item.category);
-        }
-        if (item.color && !existing.colors.includes(item.color)) {
-          existing.colors.push(item.color);
-        }
-        if (item.size && !existing.sizes.includes(item.size)) {
-          existing.sizes.push(item.size);
-        }
-        if (item.gender && !existing.genders.includes(item.gender)) {
-          existing.genders.push(item.gender);
-        }
-
-        if (item.dateAdded < existing.dateAddedMin) {
-          existing.dateAddedMin = item.dateAdded;
-        }
-        if (item.dateRequested) {
-          if (!existing.dateRequestedMin || item.dateRequested < existing.dateRequestedMin) {
-            existing.dateRequestedMin = item.dateRequested;
-          }
-        }
-        if (item.dateReceived) {
-          if (!existing.dateReceivedMax || item.dateReceived > existing.dateReceivedMax) {
-            existing.dateReceivedMax = item.dateReceived;
-          }
-        }
-
-        // Priorità stato: PENDING > TRANSFERRED > AVAILABLE
-        if (item.status === ItemStatus.PENDING) {
-          existing.status = ItemStatus.PENDING;
-        } else if (item.status === ItemStatus.TRANSFERRED && existing.status !== ItemStatus.PENDING) {
-          existing.status = ItemStatus.TRANSFERRED;
-        } else if (!existing.status) {
-          existing.status = ItemStatus.AVAILABLE;
-        }
-
-        existing.items.push(item);
+      if (item.category && !existing.categories.includes(item.category)) {
+        existing.categories.push(item.category);
       }
-    });
+      if (item.color && !existing.colors.includes(item.color)) {
+        existing.colors.push(item.color);
+      }
+      if (item.size && !existing.sizes.includes(item.size)) {
+        existing.sizes.push(item.size);
+      }
+      if (item.gender && !existing.genders.includes(item.gender)) {
+        existing.genders.push(item.gender);
+      }
 
-    // Ordina per data inserimento (più recenti in alto)
-    return Array.from(map.values()).sort((a, b) => b.dateAddedMin.localeCompare(a.dateAddedMin));
-  }, [items]);
+      if (item.dateAdded < existing.dateAddedMin) {
+        existing.dateAddedMin = item.dateAdded;
+      }
+      if (item.dateRequested) {
+        if (!existing.dateRequestedMin || item.dateRequested < existing.dateRequestedMin) {
+          existing.dateRequestedMin = item.dateRequested;
+        }
+      }
+      if (item.dateReceived) {
+        if (!existing.dateReceivedMax || item.dateReceived > existing.dateReceivedMax) {
+          existing.dateReceivedMax = item.dateReceived;
+        }
+      }
+
+      // Priorità stato: PENDING > TRANSFERRED > AVAILABLE
+      if (item.status === ItemStatus.PENDING) {
+        existing.status = ItemStatus.PENDING;
+      } else if (item.status === ItemStatus.TRANSFERRED && existing.status !== ItemStatus.PENDING) {
+        existing.status = ItemStatus.TRANSFERRED;
+      } else if (!existing.status) {
+        existing.status = ItemStatus.AVAILABLE;
+      }
+
+      existing.items.push(item);
+    }
+  });
+
+  // Ordina per data inserimento (più recenti in alto)
+  return Array.from(map.values()).sort((a, b) => b.dateAddedMin.localeCompare(a.dateAddedMin));
+}, [items]);
+
 
 
   // --- Filtered Sales Logic ---
@@ -584,11 +594,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                             {item.category}
                                           </div>
                                         </td>
-                                        <td className="px-3 py-2 text-[11px] text-slate-600">
-                                          <div>Sesso: {item.gender}</div>
-                                          <div>Colore: {item.color}</div>
-                                          <div>Taglia: {item.size}</div>
-                                        </td>
+                                            <td className="px-3 py-2 text-[11px] text-slate-600">
+      <div>
+        <span className="font-semibold">Categoria:</span>{" "}
+        {item.category || "-"}
+      </div>
+      <div>
+        <span className="font-semibold">Cod. articolo:</span>{" "}
+        {item.articleCode || "-"}
+      </div>
+      <div>
+        <span className="font-semibold">Tipologia:</span>{" "}
+        {item.typology || "-"}
+      </div>
+      <div>
+        <span className="font-semibold">Colore:</span>{" "}
+        {item.color || "-"}
+      </div>
+      <div>
+        <span className="font-semibold">Taglia:</span>{" "}
+        {item.size || "-"}
+      </div>
+      <div>
+        <span className="font-semibold">Qta:</span>{" "}
+        {item.quantity}
+      </div>
+    </td>
+
                                         <td className="px-3 py-2 text-[11px] text-slate-600">
                                           <div>Da: {item.sourceStoreName}</div>
                                           {item.destinationStoreName && (

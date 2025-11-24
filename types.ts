@@ -22,19 +22,25 @@ export interface TransferItem {
   destinationStoreName?: string;
 
   brand: string;
-  gender: string;   // Nuovo
+  gender: string;
   category: string;
-  color: string;    // Nuovo
-  size: string;     // Nuovo
+  typology?: string;     // 👈 NUOVO
+  color: string;
+  size: string;
   quantity: number;
   description: string;
+
+  articleCode?: string;
+
   status: ItemStatus;
 
   // Tracciabilità temporale
-  dateAdded: string;      // Data inserimento
-  dateRequested?: string; // Data richiesta trasferimento
-  dateReceived?: string;  // Data conferma ricezione
+  dateAdded: string;
+  dateRequested?: string;
+  dateReceived?: string;
 }
+
+
 
 export interface SalesReport {
   id: string;
