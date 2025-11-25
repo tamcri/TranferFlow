@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
-import { X, Plus, Trash2, Save } from 'lucide-react';
+import React, { useState } from "react";
+import * as XLSX from "xlsx";
+import { X, Plus, Trash2, Save } from "lucide-react";
+import GestionaleImportModal, { GestionaleRow } from "./GestionaleImportModal";
 
 interface VariantRow {
   id: string;
   category: string;
+  gender: string;       // sesso per riga
   articleCode: string;
   typology: string;
   color: string;
@@ -19,7 +22,7 @@ interface AddItemModalProps {
       brand: string;
       gender: string;
       category: string;
-      typology?: string;      // 👈 NUOVO
+      typology?: string;
       color: string;
       size: string;
       quantity: number;
@@ -29,43 +32,151 @@ interface AddItemModalProps {
   ) => void;
 }
 
-
-const CATEGORIES = ['Abbigliamento', 'Calzature', 'Borse', 'Accessori'];
+const CATEGORIES = ["Abbigliamento", "Calzature", "Borse", "Accessori"];
+const GENDERS = ["Uomo", "Donna", "Bambino", "Unisex"];
 
 export const AddItemModal: React.FC<AddItemModalProps> = ({
   isOpen,
   onClose,
   onAdd,
 }) => {
-  // Testata
-  const [brand, setBrand] = useState('');
-  const [gender, setGender] = useState('Uomo');
+  // -----------------------------
+  // Stati per il file gestionale
+  // -----------------------------
+  const [gestionaleRows, setGestionaleRows] = useState<GestionaleRow[]>([]);
+  const [isGestionaleModalOpen, setIsGestionaleModalOpen] = useState(false);
+  const [activeRowIndex, setActiveRowIndex] = useState<number | null>(null);
 
-  // Righe
+  // -----------------------------
+  // Testata (solo BRAND)
+  // -----------------------------
+  const [brand, setBrand] = useState("");
+
+  // -----------------------------
+  // Righe stock
+  // -----------------------------
   const [rows, setRows] = useState<VariantRow[]>([
     {
-      id: '1',
-      category: '',
-      articleCode: '',
-      typology: '',
-      color: '',
-      size: '',
+      id: "1",
+      category: "",
+      gender: "Uomo",
+      articleCode: "",
+      typology: "",
+      color: "",
+      size: "",
       quantity: 1,
     },
   ]);
 
   if (!isOpen) return null;
 
+  // -----------------------------
+  // Reset completo (per chiusura o dopo submit)
+  // -----------------------------
+  const resetState = () => {
+    setBrand("");
+    setRows([
+      {
+        id: "1",
+        category: "",
+        gender: "Uomo",
+        articleCode: "",
+        typology: "",
+        color: "",
+        size: "",
+        quantity: 1,
+      },
+    ]);
+    setGestionaleRows([]);
+    setIsGestionaleModalOpen(false);
+    setActiveRowIndex(null);
+  };
+
+  const handleClose = () => {
+    resetState();
+    onClose();
+  };
+
+  // Helper per normalizzare il sesso dal file
+  const normalizeGender = (raw: string): string => {
+    const v = raw.trim().toUpperCase();
+    if (!v) return "";
+    if (v === "UOMO" || v === "U") return "Uomo";
+    if (v === "DONNA" || v === "D" || v === "F") return "Donna";
+    if (v === "BAMBINO" || v === "BAMBINA" || v === "BIMBO" || v === "BIMBA")
+      return "Bambino";
+    if (v === "UNISEX" || v === "UNI") return "Unisex";
+    return ""; // se non riconosciuto, lascio vuoto così non forzo nulla
+  };
+
+  // -----------------------------
+  // Lettura file gestionale .xlsx
+  // -----------------------------
+  const handleGestionaleFileChange = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      const data = e.target?.result;
+      if (!data) return;
+
+      const workbook = XLSX.read(data, { type: "binary" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json<any>(sheet);
+
+      const parsed: GestionaleRow[] = json
+        .map((row) => {
+          const qtyRaw =
+            row["Qtà Giacenza                                      "] ?? 0;
+
+          const rawGender = (row["Sesso"] ?? "").toString();
+          const normalizedGender = normalizeGender(rawGender);
+
+          return {
+            brand: (row["Marchio"] ?? "").toString().trim(),
+            gender: normalizedGender, // 👈 normalizzato per combaciare con il select
+            category: (row["Categoria"] ?? "").toString().trim(),
+            typology: (row["Tipologia"] ?? "").toString().trim(),
+            articleCode: (row["Codice Articolo"] ?? "").toString().trim(),
+            color: (row["Colore"] ?? "").toString().trim(),
+            size: (row["Taglia"] ?? "").toString().trim(),
+            quantity: Number(qtyRaw) || 0,
+          } as GestionaleRow;
+        })
+        .filter((row) => row.articleCode); // solo righe con codice articolo
+
+      setGestionaleRows(parsed);
+
+      // auto-fill brand se il campo è vuoto e il file ha un brand
+      if (!brand && parsed.length > 0 && parsed[0].brand) {
+        setBrand(parsed[0].brand);
+      }
+
+      event.target.value = "";
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  // -----------------------------
+  // Aggiungi / rimuovi righe
+  // -----------------------------
   const handleAddRow = () => {
     setRows((prev) => [
       ...prev,
       {
         id: Date.now().toString(),
-        category: '',
-        articleCode: '',
-        typology: '',
-        color: '',
-        size: '',
+        category: "",
+        gender: "Uomo",
+        articleCode: "",
+        typology: "",
+        color: "",
+        size: "",
         quantity: 1,
       },
     ]);
@@ -82,76 +193,105 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     field: keyof VariantRow,
     value: string | number
   ) => {
-    setRows(rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+    setRows((current) =>
+      current.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    );
   };
 
+  // -----------------------------
+  // Usa riga dal gestionale
+  // (resta aperto e avanza alla riga successiva)
+  // -----------------------------
+  const handleGestionaleRowSelected = (row: GestionaleRow) => {
+    if (activeRowIndex === null) return;
+
+    setRows((prev) => {
+      const copy = [...prev];
+      const current = copy[activeRowIndex];
+
+      copy[activeRowIndex] = {
+        ...current,
+        category: row.category || current.category,
+        gender: row.gender || current.gender,
+        articleCode: row.articleCode || current.articleCode,
+        typology: row.typology || current.typology,
+        color: row.color || current.color,
+        size: row.size || current.size,
+        quantity: row.quantity || current.quantity,
+      };
+
+      return copy;
+    });
+
+    // passa automaticamente alla riga successiva, lasciando il modal aperto
+    setActiveRowIndex((prevIndex) => {
+      if (prevIndex === null) return null;
+      const nextIndex = prevIndex + 1;
+      if (nextIndex >= rows.length) {
+        // se non ci sono altre righe, chiudo il modal
+        setIsGestionaleModalOpen(false);
+        return null;
+      }
+      return nextIndex;
+    });
+  };
+
+  // -----------------------------
+  // Calcolo righe da caricare (tutte quelle valide)
+  // -----------------------------
+  const validRows = rows.filter((r) => r.category && r.quantity > 0);
+  const displayCount = validRows.length || rows.length;
+
+  // -----------------------------
+  // Salva
+  // -----------------------------
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!brand) return;
 
-    // Serve almeno una riga con categoria e quantità > 0
-    const validRows = rows.filter((r) => r.category && r.quantity > 0);
     if (validRows.length === 0) return;
 
     const itemsToAdd = validRows.map((row) => {
-  // Costruisco una descrizione leggibile con tutti i campi opzionali
-  const parts: string[] = [];
+      const parts: string[] = [];
 
-  parts.push(brand); // sempre
+      parts.push(brand);
+      if (row.articleCode) parts.push(row.articleCode);
+      if (row.typology) parts.push(row.typology);
+      parts.push(row.category);
 
-  if (row.articleCode) parts.push(row.articleCode);
-  if (row.typology) parts.push(row.typology);
-  parts.push(row.category); // sempre se è valida
+      const colorSize: string[] = [];
+      if (row.color) colorSize.push(row.color);
+      if (row.size) colorSize.push(row.size);
 
-  const colorSize: string[] = [];
-  if (row.color) colorSize.push(row.color);
-  if (row.size) colorSize.push(row.size);
+      let main = parts.join(" ");
+      if (colorSize.length > 0) {
+        main += " " + colorSize.join(" ");
+      }
 
-  let main = parts.join(' ');
-  if (colorSize.length > 0) {
-    main += ' ' + colorSize.join(' ');
-  }
+      const genderLabel = row.gender || "Uomo";
+      const description = `${main} - ${genderLabel} (${row.quantity} pz)`;
 
-  const description = `${main} - ${gender} (${row.quantity} pz)`;
-
-  return {
-    brand,
-    gender,
-    category: row.category,
-    typology: row.typology || undefined,         // 👈 NUOVO
-    color: row.color,
-    size: row.size,
-    quantity: row.quantity,
-    description,
-    articleCode: row.articleCode || undefined,
-  };
-});
-
+      return {
+        brand,
+        gender: genderLabel,
+        category: row.category,
+        typology: row.typology || undefined,
+        color: row.color,
+        size: row.size,
+        quantity: row.quantity,
+        description,
+        articleCode: row.articleCode || undefined,
+      };
+    });
 
     onAdd(itemsToAdd);
-
-    // Reset
-    setBrand('');
-    setGender('Uomo');
-    setRows([
-      {
-        id: '1',
-        category: '',
-        articleCode: '',
-        typology: '',
-        color: '',
-        size: '',
-        quantity: 1,
-      },
-    ]);
+    resetState();
     onClose();
   };
 
-  const nonEmptyRowsCount = rows.filter(
-    (r) => r.category && r.quantity > 0
-  ).length;
-  const displayCount = nonEmptyRowsCount || rows.length;
-
+  // -----------------------------
+  // RENDER
+  // -----------------------------
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-auto">
@@ -160,7 +300,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             Carica Stock Invenduto (Macro)
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-slate-400 hover:text-slate-600"
           >
             <X size={20} />
@@ -168,7 +308,25 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
-          {/* TESTATA */}
+          {/* FILE GESTIONALE */}
+          <div className="mb-6 flex justify-between items-center">
+            <div className="text-xs text-slate-600">
+              Carica file Excel dal gestionale per compilare automaticamente le
+              righe stock.
+            </div>
+
+            <label className="text-xs px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 cursor-pointer">
+              Carica file gestionale
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={handleGestionaleFileChange}
+              />
+            </label>
+          </div>
+
+          {/* TESTATA: solo BRAND (auto-compilato dal file se presente) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1">
@@ -178,66 +336,55 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                 type="text"
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2"
                 placeholder="Es. Pinko, Nike..."
                 required
               />
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">
-                Sesso / Reparto
-              </label>
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white"
-              >
-                <option value="Uomo">Uomo</option>
-                <option value="Donna">Donna</option>
-                <option value="Bambino">Bambino</option>
-                <option value="Unisex">Unisex</option>
-              </select>
-            </div>
           </div>
 
-          {/* RIGHE STOCK MACRO */}
+          {/* RIGHE STOCK */}
           <div className="space-y-3">
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wide">
-                Righe Stock (Categoria + dettagli opzionali)
+                Righe Stock
               </h3>
               <button
                 type="button"
                 onClick={handleAddRow}
-                className="text-xs flex items-center bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full font-semibold transition-colors"
+                className="text-xs flex items-center bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full"
               >
                 <Plus size={14} className="mr-1" /> Aggiungi riga
               </button>
             </div>
 
             <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
+              <table className="w-full min-w-[950px] text-sm">
                 <thead className="bg-slate-100 text-slate-500 font-semibold text-xs uppercase">
                   <tr>
                     <th className="px-4 py-3 text-left">Categoria *</th>
+                    <th className="px-4 py-3 text-left">Sesso</th>
                     <th className="px-4 py-3 text-left">Cod. articolo</th>
                     <th className="px-4 py-3 text-left">Tipologia</th>
                     <th className="px-4 py-3 text-left">Colore</th>
                     <th className="px-4 py-3 text-left">Taglia</th>
                     <th className="px-4 py-3 text-left w-24">Q.tà *</th>
-                    <th className="px-4 py-3 text-center w-10"></th>
+                    <th className="px-4 py-3 text-center">Da file</th>
+                    <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
+
                 <tbody className="divide-y divide-slate-200">
-                  {rows.map((row) => (
+                  {rows.map((row, index) => (
                     <tr key={row.id}>
+                      {/* Categoria */}
                       <td className="p-2">
                         <select
                           value={row.category}
                           onChange={(e) =>
-                            updateRow(row.id, 'category', e.target.value)
+                            updateRow(row.id, "category", e.target.value)
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none bg-white"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
                           required
                         >
                           <option value="">Seleziona...</option>
@@ -248,50 +395,77 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                           ))}
                         </select>
                       </td>
+
+                      {/* Sesso per riga */}
+                      <td className="p-2">
+                        <select
+                          value={row.gender}
+                          onChange={(e) =>
+                            updateRow(row.id, "gender", e.target.value)
+                          }
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
+                        >
+                          {GENDERS.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+
+                      {/* Cod. articolo */}
                       <td className="p-2">
                         <input
                           type="text"
                           value={row.articleCode}
                           onChange={(e) =>
-                            updateRow(row.id, 'articleCode', e.target.value)
+                            updateRow(row.id, "articleCode", e.target.value)
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
                           placeholder="Es. 12345"
                         />
                       </td>
+
+                      {/* Tipologia */}
                       <td className="p-2">
                         <input
                           type="text"
                           value={row.typology}
                           onChange={(e) =>
-                            updateRow(row.id, 'typology', e.target.value)
+                            updateRow(row.id, "typology", e.target.value)
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
                           placeholder="Es. Pantalone, Gonna..."
                         />
                       </td>
+
+                      {/* Colore */}
                       <td className="p-2">
                         <input
                           type="text"
                           value={row.color}
                           onChange={(e) =>
-                            updateRow(row.id, 'color', e.target.value)
+                            updateRow(row.id, "color", e.target.value)
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
                           placeholder="Es. Nero"
                         />
                       </td>
+
+                      {/* Taglia */}
                       <td className="p-2">
                         <input
                           type="text"
                           value={row.size}
                           onChange={(e) =>
-                            updateRow(row.id, 'size', e.target.value)
+                            updateRow(row.id, "size", e.target.value)
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5"
                           placeholder="Es. M / 40"
                         />
                       </td>
+
+                      {/* Quantità */}
                       <td className="p-2">
                         <input
                           type="number"
@@ -300,21 +474,38 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                           onChange={(e) =>
                             updateRow(
                               row.id,
-                              'quantity',
+                              "quantity",
                               parseInt(e.target.value) || 0
                             )
                           }
-                          className="w-full border-slate-300 border rounded px-2 py-1.5 focus:border-indigo-500 outline-none text-center"
+                          className="w-full border-slate-300 border rounded px-2 py-1.5 text-center"
                           required
                         />
                       </td>
+
+                      {/* Pulsante "Usa dal file" DOPO la quantità */}
+                      <td className="p-2 text-center">
+                        {gestionaleRows.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveRowIndex(index);
+                              setIsGestionaleModalOpen(true);
+                            }}
+                            className="text-[11px] px-2 py-1 border border-slate-300 rounded hover:bg-slate-100 whitespace-nowrap"
+                          >
+                            Usa dal file
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Elimina riga */}
                       <td className="p-2 text-center">
                         {rows.length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleRemoveRow(row.id)}
-                            className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                            tabIndex={-1}
+                            className="text-slate-400 hover:text-red-500"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -325,25 +516,42 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-400 italic px-1">
-              I campi contrassegnati con * sono obbligatori. Gli altri sono
-              opzionali.
+
+            <p className="text-xs text-slate-400 italic px-1 mt-1">
+              I campi * sono obbligatori.
             </p>
           </div>
 
+          {/* Pulsante salva */}
           <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
             <button
               type="submit"
-              className="bg-indigo-600 text-white font-bold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center"
+              className="bg-indigo-600 text-white font-bold py-3 px-8 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 flex items-center"
             >
               <Save size={18} className="mr-2" />
-              Carica {displayCount}{' '}
-              {displayCount === 1 ? 'Riga Stock' : 'Righe Stock'}
+              Carica {displayCount}{" "}
+              {displayCount === 1 ? "Riga Stock" : "Righe Stock"}
             </button>
           </div>
         </form>
       </div>
+
+      {/* MODAL RIGHE GESTIONALE */}
+      <GestionaleImportModal
+        isOpen={isGestionaleModalOpen}
+        rows={gestionaleRows}
+        onClose={() => {
+          setIsGestionaleModalOpen(false);
+          setActiveRowIndex(null);
+        }}
+        onRowSelected={handleGestionaleRowSelected}
+      />
     </div>
   );
 };
+
+
+
+
+
 

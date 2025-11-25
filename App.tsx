@@ -340,51 +340,56 @@ const App: React.FC = () => {
 
 
   // --- Richiesta blocco (lotto per brand/lotKey) ---
-  const handleRequestTransferGroup = (group: BrandGroup) => {
-    if (!currentStore) return;
+  const handleRequestTransferGroup = (
+  group: BrandGroup,
+  selectedItemIds?: string[]
+) => {
+  if (!currentStore) return;
 
-    const nowIso = new Date().toISOString();
-    const toUpdate: TransferItem[] = [];
+  const nowIso = new Date().toISOString();
+  const toUpdate: TransferItem[] = [];
 
-    setItems(prev =>
-      prev.map(it => {
-        const belongsToGroup =
-          getLotKey(it) === group.lotKey && // 👈 stesso lotto
-          it.status === ItemStatus.AVAILABLE;
+  setItems(prev =>
+    prev.map(it => {
+      const belongsToGroup =
+        getLotKey(it) === group.lotKey &&
+        it.status === ItemStatus.AVAILABLE &&
+        (!selectedItemIds || selectedItemIds.includes(it.id)); // 👈 filtra se hai selezioni
 
-        if (belongsToGroup) {
-          const updated: TransferItem = {
-            ...it,
-            status: ItemStatus.PENDING,
-            destinationStoreId: currentStore.id,
-            destinationStoreName: currentStore.name,
-            dateRequested: nowIso,
-          };
-          toUpdate.push(updated);
-          return updated;
-        }
-        return it;
-      })
-    );
-
-    if (toUpdate.length === 0) {
-      showToast('Nessun articolo disponibile in questo lotto.');
-      return;
-    }
-
-    showToast(
-      `Richiesta inviata per ${toUpdate.length} articoli del brand ${group.brand}.`
-    );
-
-    (async () => {
-      try {
-        await Promise.all(toUpdate.map(it => updateTransferItem(it)));
-      } catch (err) {
-        console.error('Errore aggiornamento lotto su Supabase:', err);
-        showToast('Errore aggiornamento lotto su Supabase.');
+      if (belongsToGroup) {
+        const updated: TransferItem = {
+          ...it,
+          status: ItemStatus.PENDING,
+          destinationStoreId: currentStore.id,
+          destinationStoreName: currentStore.name,
+          dateRequested: nowIso,
+        };
+        toUpdate.push(updated);
+        return updated;
       }
-    })();
-  };
+      return it;
+    })
+  );
+
+  if (toUpdate.length === 0) {
+    showToast("Nessun articolo disponibile in questo lotto.");
+    return;
+  }
+
+  showToast(
+    `Richiesta inviata per ${toUpdate.length} articoli del brand ${group.brand}.`
+  );
+
+  (async () => {
+    try {
+      await Promise.all(toUpdate.map(it => updateTransferItem(it)));
+    } catch (err) {
+      console.error("Errore aggiornamento lotto su Supabase:", err);
+      showToast("Errore aggiornamento lotto su Supabase.");
+    }
+  })();
+};
+
 
   // --- Conferma ricezione lotto (destinazione conferma tutto il blocco) ---
   const handleConfirmReceiptGroup = (group: BrandGroup) => {
@@ -676,13 +681,18 @@ const App: React.FC = () => {
   ) : (
     groupsToShow.map(group => (
       <BrandGroupCard
-        key={group.lotKey} // 👈 chiave React per lotto, non solo brand
-        group={group}
-        currentStoreId={currentStore.id}
-        mode={view === 'dashboard' ? 'network' : 'my-stock'}
-        onRequestGroup={view === 'dashboard' ? handleRequestTransferGroup : undefined}
-        onConfirmGroup={view === 'my-items' ? handleConfirmReceiptGroup : undefined}
-      />
+  key={group.lotKey}
+  group={group}
+  currentStoreId={currentStore.id}
+  mode={view === "dashboard" ? "network" : "my-stock"}
+  onRequestLot={
+    view === "dashboard" ? handleRequestTransferGroup : undefined
+  }
+  onConfirmGroup={
+    view === "my-items" ? handleConfirmReceiptGroup : undefined
+  }
+/>
+
     ))
   )}
 </div>
